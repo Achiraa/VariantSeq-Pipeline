@@ -1,0 +1,71 @@
+## VCF Pipeline
+
+#!/bin/bash
+
+# Set up conda environment
+echo "Adding conda channels and creating environment..."
+conda config --add channels conda-forge
+conda config --add channels bioconda
+conda create -n variants bwa bcftools samtools sickle python biopython Bowtie SnpEff -y
+source activate variants
+
+# Create project directories
+echo "Setting up project directories..."
+mkdir -p ~/projects
+cd ~/projects/
+
+# Download sequencing reads
+echo "Downloading sequencing reads..."
+wget http://ftp.sra.ebi.ac.uk/vol1/run/ERR333/ERR3335404/P7741_R1.fastq.gz
+wget http://ftp.sra.ebi.ac.uk/vol1/run/ERR333/ERR3335404/P7741_R2.fastq.gz
+
+# Fetch the reference genome using Biopython
+echo "Fetching reference genome..."
+python - << EOF
+from Bio import Entrez, SeqIO
+Entrez.email = 'achirashah30@gmail.com'
+handle = Entrez.efetch(db='nuccore', id='CP000325.1', rettype='fasta', retmode='text')
+record = SeqIO.read(handle, 'fasta')
+SeqIO.write(record, 'Agy99.fasta', 'fasta')
+EOF
+
+# Trim the sequencing reads
+echo "Trimming sequencing reads..."
+sickle pe -f P7741_R1.fastq.gz -r P7741_R2.fastq.gz -t sanger -q 30 -l 20 -g -o trimmed_R1.fastq.gz -p trimmed_R2.fastq.gz -s trimmed_S.fastq.gz
+
+# Set up reference genome for BWA
+echo "Setting up reference genome for BWA..."
+mkdir -p ~/ref
+mv Agy99.fasta ~/ref/
+bwa index ~/ref/Agy99.fasta
+
+# Align the reads to the reference genome
+echo "Aligning reads to the reference genome..."
+bwa mem ~/ref/Agy99.fasta trimmed_R1.fastq.gz trimmed_R2.fastq.gz > output.sam
+
+# Convert SAM to BAM, sort and clean up
+echo "Converting SAM to BAM, sorting, and cleaning up..."
+samtools view -S -b output.sam > output.bam
+samtools sort -o output.sorted.bam output.bam
+rm output.bam output.sam
+
+# Generate mapping statistics
+echo "Generating mapping statistics..."
+samtools flagstat output.sorted.bam > mappingstats.txt
+
+# Call variants using BCFtools
+echo "Calling variants with BCFtools..."
+bcftools mpileup -o raw.bcf -f ~/ref/Agy99.fasta -q 30 -Q 30 output.sorted.bam
+bcftools call --ploidy 1 -m -v -o variants.raw.vcf raw.bcf
+
+# Extract variant positions and clean up
+echo "Extracting variant positions and cleaning up..."
+bcftools query -f '%POS\n' variants.raw.vcf > position.txt
+
+# Clean up intermediate files
+echo "Cleaning up intermediate files..."
+rm raw.bcf position.txt
+
+# Print summary
+echo "Variant calling completed. Output files:"
+ls -lh ~/projects/
