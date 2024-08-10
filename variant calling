@@ -1,5 +1,3 @@
-## VCF Pipeline
-
 #!/bin/bash
 
 # Set up conda environment
